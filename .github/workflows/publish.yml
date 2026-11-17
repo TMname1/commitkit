@@ -1,0 +1,86 @@
+name: Publish to npm
+
+on:
+  push:
+    branches:
+      - main
+
+# 同一时间只允许一个发布任务，避免并发推 npm 时版本竞态
+concurrency:
+  group: publish-npm
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Build and publish the package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check NPM_TOKEN secret
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "::error::Repository secret NPM_TOKEN is missing or empty. This is a config issue, not a CI bug."
+            echo "Add it at: repo Settings -> Secrets and variables -> Actions -> New repository secret"
+            echo "  Name:  NPM_TOKEN"
+            echo "  Value: an npm Automation token, or a Granular Access Token scoped to @tmname1 with 'Bypass 2FA when publishing' enabled"
+            echo "Token page: https://www.npmjs.com/settings/tokens"
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci || npm install
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          AUTH_PATTERN='E401|E403|ENEEDAUTH|401 Unauthorized|403 Forbidden|Invalid or expired|invalid token|no permission to publish|requires you to be logged in|two-factor|2FA|OTP|This command requires'
+
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+
+          if npm view "${name}@${version}" version --registry=https://registry.npmjs.org >/dev/null 2>&1; then
+            echo "Skip ${name}@${version}: already published on npm (bump version to publish a new build)."
+            exit 0
+          fi
+
+          echo "Publishing ${name}@${version}..."
+          log=$(mktemp)
+          if npm publish --access public 2>&1 | tee "$log"; then
+            echo "Published ${name}@${version}."
+            rm -f "$log"
+            exit 0
+          fi
+          status=${PIPESTATUS[0]}
+
+          if grep -Eiq "$AUTH_PATTERN" "$log"; then
+            echo "::error::${name}@${version} publish failed with an authentication error. This is most likely an NPM_TOKEN / 2FA configuration problem, NOT a CI code bug."
+            echo "Likely causes:"
+            echo "  1. Repository secret NPM_TOKEN is expired, revoked, or was never set."
+            echo "  2. The token lacks publish permission for scope @tmname1 — regenerate it as a Granular Access Token scoped to that user/org with 'Read and write' on Packages."
+            echo "  3. The npm account enforces 2FA on publishing and the token type cannot bypass it — switch to a Granular Access Token with 'Bypass 2FA when publishing' enabled."
+            echo "  4. The @tmname1 scope is owned by a different npm account than the one that issued the token."
+            echo "Token status page: https://www.npmjs.com/settings/tokens"
+          else
+            echo "::error::${name}@${version} publish failed (non-auth reason). The npm output above shows the underlying error."
+          fi
+
+          rm -f "$log"
+          exit "$status"
