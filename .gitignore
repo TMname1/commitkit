@@ -1,0 +1,11 @@
+node_modules/
+out/
+dist/
+*.log
+.DS_Store
+# Moved up from the deleted opencommit/.gitignore when the workspaces were merged into one package.
+opencommit/coverage/
+opencommit/temp/
+opencommit/.env
+# Added by code-review-graph
+.code-review-graph/
