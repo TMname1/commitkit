@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches:
-      - main
+      - '**'
   pull_request:
 
 # 同一分支只保留最新一次，旧的并发任务直接取消
